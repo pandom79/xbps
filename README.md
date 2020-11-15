@@ -41,7 +41,11 @@ to handle binary packages and repositories. Some highlights:
  * Ability to **execute pre/post install/remove/update scriptlets**.
  * Ability to **check package integrity**: missing files, hashes, missing or
    unresolved (reverse)dependencies, dangling or modified symlinks, etc.
-
+ * <a href="#Xbps-hooks">New feature</a>: Ability to **execute xbps hooks** pre and post transaction.  
+   Powered by [Domenico Panella](mailto:pandom79@gmail.com)  
+  
+  
+  
 XBPS contains an almost complete test suite, currently with ~200 test cases,
 and its number is growing daily! If you find any issue and you can reproduce it,
 we will fix it and a new test case will be created. No more regressions!
@@ -427,3 +431,75 @@ find /boot /etc /opt /usr /var -xdev -type f -print | sort > $fs
 
 comm -23 $fs $pkg
 ```
+<br/>
+
+### Xbps hooks
+Xbps can run pre and post transaction hooks from the **/usr/share/xbps.d/hooks** directory.  
+A different directory can be specified with the **-H** or **--hooksdir** option  
+for **xbps-install** and **xbps-remove** commands, which defaults to **/usr/share/xbps.d/hooks**.  
+Hook file names must be suffixed with **".hook"**.  
+Xbps hooks are not interactive.  
+A hook can be executed at most two times: once in PreTransaction and once in PostTransaction.  
+Following show the xbps hook file format:  
+
+```
+[Trigger] (Required)  
+Operation = Install|Upgrade|Remove (Required, Repeatable)  
+Type = Path|Package (Required, Not Repeatable)  
+Target = <Path|PkgName> (Required, Repeatable)  
+  
+[Action] (Required)  
+Description = ... (Optional, Not Repeatable)  
+When = PreTransaction|PostTransaction (Required, Repeatable)  
+Exec = command (Required, Not Repeatable)  
+AbortOnFail = True|False (Optional, PreTransaction only, Not Repeatable)
+```
+
+**Explanation**:
+
+
+**[Trigger]**  
+Hooks must contain [Trigger] section that determines which transactions will cause the hook to run.  
+
+* **Operation** = Install|Upgrade|Remove  
+Select the type of operation to match targets against.  
+May be specified multiple times.  
+Installations are considered an upgrade if the new package version is actually greater than the currently installed version.  
+For Path triggers, this is true even if the file changes ownership from one package to another. Required.  
+
+* **Type** = Path|Package  
+Select whether targets are matched against transaction packages or files.  
+Required.  
+
+* **Target** = <path|package>  
+The path or package name to match against the active transaction.  
+Paths refer to the files in the package archive.  
+Can be specified a partial path too omitting the final back slash.  
+An example: "/usr/share/fonts".  
+In this case the hook will be executed for all font's packages.  
+May be specified multiple times. Required.  
+
+
+**[Action]**  
+
+* **Description** = …  
+An optional description that describes the action being taken by the hook for use in front-end output.  
+
+* **Exec** = <command>
+Command to run. 
+
+* **When** = PreTransaction|PostTransaction  
+When to run the hook. May be specified multiple times. Required.
+
+* **AbortOnFail** = True|False  
+Causes the transaction to be aborted if the hook exits non-zero.  
+The default value is False.  
+Only applies to PreTransaction hooks.
+<br/>
+
+The xbps hooks will be validate showing eventual configuration errors.
+<br/>
+
+A note about the **Type** and **Target** properties:  
+these are complementary properties, it means that both can be valued or null.  
+If both are null, the xbps hook will be always execute according to **Operation** and **When** properties value.  

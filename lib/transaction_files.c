@@ -768,7 +768,7 @@ xbps_transaction_files(struct xbps_handle *xhp, xbps_object_iterator_t iter)
 	xbps_object_t obj;
 	xbps_trans_type_t ttype;
 	const char *pkgver, *pkgname;
-	int rv = 0;
+    int rv = 0, hooks_size = 0;
 	unsigned int idx = 0;
 
 	assert(xhp);
@@ -840,6 +840,31 @@ xbps_transaction_files(struct xbps_handle *xhp, xbps_object_iterator_t iter)
 	}
 	xbps_object_iterator_reset(iter);
 
+    /*
+     * Execution of pre transaction hooks
+    */
+    hooks_size = (xhp->hooks!=NULL ? xbps_array_count( xhp->hooks) : 0);
+    if ( hooks_size > 0 ){
+        while ((obj = xbps_object_iterator_next(iter)) != NULL) {
+
+            /* ignore pkgs in hold mode or in unpacked state */
+            ttype = xbps_transaction_pkg_type(obj);
+            if (ttype == XBPS_TRANS_HOLD || ttype == XBPS_TRANS_CONFIGURE) {
+                continue;
+            }
+
+            if (!xbps_dictionary_get_cstring_nocopy(obj, "pkgname", &pkgname)) {
+                return EINVAL;
+            }
+            /* If rv != 0 it means that the hook has to abort the transaction  */
+            rv = xbps_hooks_exec_pre( xhp, pkgname, ttype );
+            if ( rv != 0 ){
+                goto out;
+            }
+        }
+    }
+    xbps_object_iterator_reset(iter);
+
 	/*
 	 * Sort items by path length, to make it easier to find files in
 	 * directories.
@@ -860,4 +885,363 @@ out:
 	rv = collect_obsoletes(xhp);
 	cleanup();
 	return rv;
+}
+
+int HIDDEN
+xbps_hooks_exec_pre(struct xbps_handle *xhp , const char *pkgname , xbps_trans_type_t ttype ){
+
+    xbps_string_t description, operation, filename, filepath, exec, error;
+    xbps_dictionary_t hook_dict = NULL;
+    char *execstr = NULL;
+    int hooks_size,rv;
+    bool skip, showmsg, showvalidmsg, exec_pre, exec_post, abrtonfail, valid;
+
+    assert(xhp);
+    assert(pkgname);
+    assert(ttype);
+
+    /* Initialize */
+    description = operation = filename = filepath = exec = error = NULL;
+    hooks_size = rv = 0;
+    skip = showmsg = showvalidmsg = exec_pre = exec_post = abrtonfail = valid = false;
+
+    /* Set Operation */
+    operation = xbps_string_create_cstring( ttype_val_str(ttype));
+    assert(operation);
+
+    if ( xhp->flags & XBPS_FLAG_DEBUG ){
+        xbps_dbg_printf(xhp, "\n[hook] executing pre transaction hooks\n" );
+        xbps_dbg_printf(xhp, "[hook] Operation: %s \n", xbps_string_cstring(operation));
+        xbps_dbg_printf(xhp, "[hook] Pkgname: %s \n", pkgname);
+    }
+
+    hooks_size = ( xhp->hooks != NULL ? xbps_array_count(xhp->hooks) : 0 );
+    /* Execution cycle of the xbps hooks */
+    for (int i=0; i<hooks_size ; i++) {
+
+        /* Reset exec_pre and exec_post*/
+        exec_pre = exec_post = false;
+
+        /* Get xbps_hook */
+        hook_dict = xbps_array_get( xhp->hooks , i );
+        assert(hook_dict);
+
+        xbps_dictionary_get_bool( hook_dict , hook_dict_keystr(XBPS_HOOK_VALID_KEY) , &valid );
+
+        /* If hook is valid */
+        if ( valid ){
+
+            /* Get properties */
+            filename = xbps_dictionary_get( hook_dict , hook_dict_keystr(XBPS_HOOK_FNAME_KEY) );
+            filepath = xbps_dictionary_get( hook_dict , hook_dict_keystr(XBPS_HOOK_FPATH_KEY) );
+            xbps_dictionary_get_bool( hook_dict , hook_dict_keystr(XBPS_HOOK_SKIP_KEY) , &skip );
+
+            xbps_dbg_printf(xhp, "[hook] Hook: %s \n" , xbps_string_cstring(filepath));
+
+            if (!skip && xbps_hook_chk_exec(xhp, hook_dict, pkgname, operation ) ){
+
+                xbps_dictionary_get_bool( hook_dict , hook_dict_keystr(XBPS_HOOK_EXEC_PRE_KEY) , &exec_pre );
+                xbps_dictionary_get_bool( hook_dict , hook_dict_keystr(XBPS_HOOK_EXEC_POST_KEY) , &exec_post );
+                xbps_dictionary_get_bool( hook_dict , hook_dict_keystr(XBPS_HOOK_ABRTONFAIL_KEY) , &abrtonfail );
+
+                if ( xhp->flags & XBPS_FLAG_DEBUG ){
+                    xbps_dbg_printf(xhp, "[hook] exec pre: %d \n" , exec_pre);
+                    xbps_dbg_printf(xhp, "[hook] exec post: %d \n" , exec_post);
+                    xbps_dbg_printf(xhp, "[hook] abrtonfail: %d \n" , abrtonfail);
+                }
+
+                if ( exec_pre ){
+                    /* Show msg once */
+                    if ( !showmsg ){
+                        xbps_set_cb_state(xhp, XBPS_STATE_PRE_TRANSACTION_HOOKS, 0, NULL, NULL);
+                        showmsg = true;
+                    }
+
+                    /* Get description and exec property */
+                    description = xbps_dictionary_get( hook_dict , hook_dict_keystr(XBPS_HOOK_DESCRIPTION_KEY));
+                    exec = xbps_dictionary_get( hook_dict , hook_dict_keystr(XBPS_HOOK_EXEC_KEY));
+                    execstr = xbps_string_cstring(exec);
+                    assert(execstr);
+
+                    xbps_set_cb_state(xhp, XBPS_STATE_EXECUTING_HOOK, 0,
+                                      xbps_string_cstring(filename), NULL);
+
+                    /* Show the 'Description' if exist*/
+                    if ( description != NULL ){
+                        printf( "%s \n", xbps_string_cstring(description) );
+                    }
+                    /* A hook can be executed once */
+                    rv = system(execstr);
+                    if ( rv != 0 ){
+                        printf("Error in '%s': %s\n", execstr , strerror(rv));
+                    }
+                    else if ( rv == 0 ){
+                        xbps_set_cb_state(xhp, XBPS_STATE_EXECUTED_HOOK, 0,
+                                          xbps_string_cstring(filename), NULL);
+                    }
+
+                    /* Return a error only if abrtonfail=true */
+                    if ( rv != 0 && abrtonfail ){
+                        /* Abort transaction */
+                        xbps_dbg_printf(xhp, "'%s' has returned an incorrect value: %d.\n",
+                                xbps_string_cstring(filename), rv );
+                        printf( "It has been configured to abort transaction in error case. (AbortOnFail = True)\n\n" );
+                        goto abort;
+                    }
+                    else rv = 0;
+
+                    xbps_dictionary_set_bool( hook_dict , hook_dict_keystr(XBPS_HOOK_SKIP_KEY) , true );
+                    xbps_dbg_printf(xhp, "[hook] Hook %s: set skip to true! \n",
+                                    xbps_string_cstring(filepath));
+
+                    /* Release execstr */
+                    execstr = NULL;
+                    free(execstr);
+                }
+                else {
+                    xbps_dictionary_set_bool(hook_dict , hook_dict_keystr(XBPS_HOOK_SKIP_KEY) , true);
+                    xbps_dbg_printf(xhp, "[hook] hook check passed but it will be skipped!\n");
+                }
+            }
+            else {
+                xbps_dbg_printf(xhp, "[hook] hook check failed or skip = true!\n");
+                xbps_dictionary_set_bool(hook_dict , hook_dict_keystr(XBPS_HOOK_SKIP_KEY) , true);
+            }
+
+        }
+
+    }
+    goto out;
+
+    abort:
+        /* Release execstr */
+        execstr = NULL;
+        free(execstr);
+
+    out:
+        //Release resources
+        operation = NULL;
+        free(operation);
+
+    return rv;
+
+}
+
+bool HIDDEN
+xbps_hook_chk_exec(struct xbps_handle *xhp , xbps_dictionary_t hook_dict, const char* pkgname ,
+                      xbps_string_t operation ){
+
+    xbps_string_t type, target, element = NULL;
+    xbps_array_t operations, targets, whens = NULL;
+    int i, size = 0;
+    bool match = false;
+
+    assert(hook_dict);
+    assert(pkgname);
+    assert(operation);
+
+    /* Initialize */
+    type = xbps_dictionary_get( hook_dict , hook_dict_keystr(XBPS_HOOK_TYPE_KEY) );
+    operations = xbps_dictionary_get( hook_dict , hook_dict_keystr(XBPS_HOOK_OPERATION_KEY) );
+    targets = xbps_dictionary_get( hook_dict , hook_dict_keystr(XBPS_HOOK_TARGET_KEY) );
+    whens = xbps_dictionary_get( hook_dict , hook_dict_keystr(XBPS_HOOK_WHEN_KEY) );
+
+    /* Check 'Operation' */
+    size = xbps_array_count(operations);
+    for (i=0; i<size ; i++) {
+        element = xbps_array_get( operations , i );
+        assert(element);
+        xbps_dbg_printf(xhp, "[hook] Element %s\n" , xbps_string_cstring(element) );
+        if ( xbps_string_equals( element , operation ) ){
+            xbps_dbg_printf(xhp, "[hook] Operation found!\n" );
+            match = true;
+            break;
+        }
+    }
+    if ( !match ) {
+        xbps_dbg_printf(xhp, "[hook] Operation not found!\n" );
+        return false;
+    }
+
+    /*
+     * Check 'Target' by type
+     */
+
+    size = xbps_array_count(targets);
+    /* Type='PACKAGE' */
+    if ( xbps_string_equals_cstring(type , hook_type_valstr(TYPE_PACKAGE) ) ){
+        match = false;
+        for ( i=0; i<size; i++ ){
+            xbps_dbg_printf(xhp, "[hook] Pkgname : %s\n" , pkgname );
+            element = xbps_array_get( targets , i );
+            assert(element);
+            xbps_dbg_printf(xhp, "[hook] Element : %s\n" , xbps_string_cstring(element) );
+
+            if ( xbps_string_equals_cstring( element, pkgname ) ){
+                xbps_dbg_printf(xhp, "[hook] Target (package) found!\n" );
+                match = true;
+                break;
+            }
+        }
+        /* Target (package) not found, exit... */
+        if ( !match ) {
+            xbps_dbg_printf(xhp, "[hook] Target (package) not found!\n" );
+            return false;
+        }
+    }
+    /* Type='PATH' */
+    else if ( xbps_string_equals_cstring( type , hook_type_valstr(TYPE_PATH) )){
+        match = false;
+        for ( i=0; i<size; i++ ){
+            for (size_t j=0; j<itemsidx ; j++ ) {
+                element = xbps_array_get( targets , i );
+                assert(element);
+                target = xbps_string_create_cstring(".");
+                assert(target);
+                xbps_string_append( target , element );
+
+                if ( xhp->flags & XBPS_FLAG_DEBUG ) {
+                    xbps_dbg_printf(xhp, "[hook] Path : %s\n" , xbps_string_cstring(target) );
+                    xbps_dbg_printf(xhp, "[hook] Element : %s\n" , items[j]->file );
+                }
+                if ( xbps_string_equals_cstring( target , items[j]->file ) ){
+                    xbps_dbg_printf(xhp, "[hook] Target (path) found!\n" );
+                    match = true;
+                    break;
+                }
+                xbps_object_release(target);
+                target = NULL;
+            }
+            if (match) break;
+        }
+        if ( target != NULL ){
+            xbps_object_release(target);
+            target = NULL;
+        }
+    }
+    /* Target (Path) not found, exit... */
+    if ( !match ) {
+        xbps_dbg_printf(xhp, "[hook] Target (path) not found!\n" );
+        return false;
+    }
+
+    /* Check 'When' */
+    size = xbps_array_count(whens);
+    match = false;
+    for (i=0; i<size; i++) {
+        element = xbps_array_get( whens , i );
+        assert(element);
+        xbps_dbg_printf(xhp, "[hook] Element %s\n" , xbps_string_cstring(element) );
+        if ( xbps_string_equals_cstring( element , hook_when_valstr(WHEN_PRE_TRANSACTION) ) ){
+            xbps_dbg_printf(xhp, "[hook] Pre transaction found!\n" );
+            xbps_dictionary_set_bool(hook_dict, hook_dict_keystr(XBPS_HOOK_EXEC_PRE_KEY), true);
+            match = true;
+        }
+        else if ( xbps_string_equals_cstring( element , hook_when_valstr(WHEN_POST_TRANSACTION) ) ){
+            xbps_dbg_printf(xhp, "[hook] Post transaction found!\n" );
+            xbps_dictionary_set_bool(hook_dict, hook_dict_keystr(XBPS_HOOK_EXEC_POST_KEY), true);
+        }
+    }
+    if ( !match ) {
+        xbps_dbg_printf(xhp, "[hook] Pre transaction not found!\n" );
+        return false;
+    }
+
+    return true;
+}
+
+void HIDDEN xbps_hooks_exec_post(struct xbps_handle *xhp)  {
+
+    xbps_array_t hooks = NULL;
+    xbps_dictionary_t hook_dict = NULL;
+    xbps_string_t description, filename, filepath, exec;
+    int i, size_hooks, rv;
+    bool showmsg, valid, skip, exec_post;
+    char *execstr = NULL;
+
+    assert(xhp);
+
+    /* Initialize */
+    description = filename = filepath = exec = NULL;
+    showmsg = valid = skip = exec_post = false;
+    i = size_hooks = rv = 0;
+
+    /* Before execution cycle, initialize skip=false for all hooks */
+    hooks = xhp->hooks;
+    size_hooks = ( hooks!=NULL ? xbps_array_count(hooks) : 0 );
+    for (i=0; i<size_hooks ; i++) {
+        hook_dict = xbps_array_get(hooks,i);
+        assert(hook_dict);
+        xbps_dictionary_set_bool( hook_dict, hook_dict_keystr(XBPS_HOOK_SKIP_KEY) , false );
+    }
+
+    xbps_dbg_printf(xhp, "[hook] executing post transaction hooks \n" );
+
+    /* Execution cycle of post transaction hooks */
+    for (i=0; i<size_hooks ; i++) {
+        /* Get hook */
+        hook_dict = xbps_array_get(hooks,i);
+
+        /* Reset exec_post */
+        exec_post = false;
+
+        /* Get hook data */
+        description = xbps_dictionary_get(hook_dict, hook_dict_keystr(XBPS_HOOK_DESCRIPTION_KEY));
+        filename = xbps_dictionary_get(hook_dict, hook_dict_keystr(XBPS_HOOK_FNAME_KEY));
+        filepath = xbps_dictionary_get(hook_dict, hook_dict_keystr(XBPS_HOOK_FPATH_KEY));
+        xbps_dictionary_get_bool(hook_dict, hook_dict_keystr(XBPS_HOOK_VALID_KEY), &valid);
+        xbps_dictionary_get_bool(hook_dict, hook_dict_keystr(XBPS_HOOK_EXEC_POST_KEY), &exec_post);
+        xbps_dictionary_get_bool(hook_dict, hook_dict_keystr(XBPS_HOOK_SKIP_KEY), &skip);
+
+        if ( xhp->flags & XBPS_FLAG_DEBUG ){
+            xbps_dbg_printf(xhp, "[hook] Hook: %s \n" , xbps_string_cstring(filepath));
+            xbps_dbg_printf(xhp, "[hook] skip: %d \n", skip );
+            xbps_dbg_printf(xhp, "[hook] valid: %d \n", valid );
+            xbps_dbg_printf(xhp, "[hook] exec_post: %d \n", exec_post );
+        }
+
+        if (!skip && valid && exec_post){
+
+            /* Show the msg once */
+            if ( !showmsg ){
+                xbps_set_cb_state(xhp, XBPS_STATE_POST_TRANSACTION_HOOKS, 0, NULL, NULL);
+                showmsg = true;
+            }
+
+            exec = xbps_dictionary_get(hook_dict, hook_dict_keystr(XBPS_HOOK_EXEC_KEY));
+            execstr = xbps_string_cstring(exec);
+
+            xbps_dbg_printf(xhp, "[hook] Hook %s: executing ... \n",
+                            xbps_string_cstring(filepath));
+            xbps_set_cb_state(xhp, XBPS_STATE_EXECUTING_HOOK, 0,
+                              xbps_string_cstring(filename) , NULL);
+
+            /* Show the 'Description' if exist*/
+            if ( description != NULL ){
+                printf( "%s \n", xbps_string_cstring(description) );
+            }
+            /* Execute hook */
+            rv = system(execstr);
+            if ( rv != 0 ){
+                printf("Error in '%s': %s\n", execstr , strerror(rv));
+            }
+            else if ( rv == 0 ){
+                xbps_set_cb_state(xhp, XBPS_STATE_EXECUTED_HOOK, 0,
+                                  xbps_string_cstring(filename), NULL);
+            }
+
+            /* A hook can be executed once */
+            xbps_dictionary_set_bool(hook_dict , hook_dict_keystr(XBPS_HOOK_SKIP_KEY), true);
+            xbps_dbg_printf(xhp, "[hook] Hook %s: set skip to true! \n",
+                            xbps_string_cstring(filepath));
+
+            /* Release resources */
+            execstr = NULL;
+            free(execstr);
+        }
+        else {
+            xbps_dbg_printf(xhp, "[hook] Hook %s: skipped \n",
+                            xbps_string_cstring(filepath));
+        }
+    }
 }

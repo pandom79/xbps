@@ -958,3 +958,17 @@ xbps_plist_dictionary_from_file(struct xbps_handle *xhp, const char *f)
 	}
 	return d;
 }
+
+xbps_string_t xbps_string_toupper( xbps_string_t str ){
+    xbps_string_t newstr = NULL;
+    if ( str != NULL ){
+        char* value = xbps_string_cstring(str);
+        toupperstr( value );
+        /* Create new */
+        newstr = xbps_string_create_cstring(value);
+        /* Release old */
+        xbps_object_release(str);
+        str = NULL;
+    }
+    return newstr;
+}

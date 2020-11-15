@@ -64,9 +64,10 @@ xbps_transaction_commit(struct xbps_handle *xhp)
 	xbps_trans_type_t ttype;
 	const char *pkgver = NULL;
 	int rv = 0;
-	bool update;
+    bool update, show_msgremove;
 
 	setlocale(LC_ALL, "");
+    show_msgremove = false;
 
 	assert(xbps_object_type(xhp->transd) == XBPS_TYPE_DICTIONARY);
 	/*
@@ -103,6 +104,27 @@ xbps_transaction_commit(struct xbps_handle *xhp)
 	if (xhp->flags & XBPS_FLAG_DOWNLOAD_ONLY) {
 		goto out;
 	}
+
+    /*
+    * Build complete xbps hooks path.
+    * If it fails, it has not to broke transaction.
+    * Provide only debug information.
+    */
+    if ((rv = xbps_hooks_load_path( xhp->hooksdir, &xhp->hooks)) != 0) {
+        xbps_dbg_printf(xhp, "[trans] failed to build complete hooks path '%s': "
+            "%s\n", xhp->hooksdir, strerror(rv));
+    }
+    else {
+        /* Sorting hooks alphabetically */
+        xbps_hooks_sort_path(&xhp->hooks);
+        /*
+        * Loading all xbps hooks data
+        * This will populate the array 'xhp->hooks' with the complete data
+        * If it fails, it has not to broke transaction.
+        * Provide only debug information.
+        */
+       xbps_hooks_load_data(xhp);
+    }
 
 	/*
 	 * Collect files in the transaction and find some issues
@@ -149,6 +171,13 @@ xbps_transaction_commit(struct xbps_handle *xhp)
 			 * Remove package.
 			 */
 			update = false;
+
+            //Show remove msg once
+            if ( !show_msgremove ){
+                xbps_set_cb_state(xhp, XBPS_STATE_REMOVE_HEAD, 0, NULL, NULL);
+                show_msgremove = true;
+            }
+
 			xbps_dictionary_get_bool(obj, "remove-and-update", &update);
 			rv = xbps_remove_pkg(xhp, pkgver, update);
 			if (rv != 0) {
@@ -267,6 +296,13 @@ xbps_transaction_commit(struct xbps_handle *xhp)
 			    pkgver, NULL);
 		}
 	}
+
+    /* Executing post transaction hooks
+     * It hasn't to return a value in error case.
+     * Provide only debug information
+     */
+    xbps_hooks_exec_post(xhp);
+
 
 out:
 	xbps_object_iterator_release(iter);

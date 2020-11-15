@@ -35,6 +35,8 @@
 #include <stdint.h>
 #include <sys/types.h>
 #include <xbps/xbps_object.h>
+#include <xbps/xbps_stringutil.h>
+
 
 typedef struct _prop_string *xbps_string_t;
 
@@ -48,6 +50,8 @@ xbps_string_t	xbps_string_create_cstring_nocopy(const char *);
 
 xbps_string_t	xbps_string_copy(xbps_string_t);
 xbps_string_t	xbps_string_copy_mutable(xbps_string_t);
+
+xbps_string_t   xbps_string_toupper( xbps_string_t );
 
 size_t		xbps_string_size(xbps_string_t);
 bool		xbps_string_mutable(xbps_string_t);

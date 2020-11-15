@@ -161,4 +161,24 @@ struct xbps_repo HIDDEN *xbps_regget_repo(struct xbps_handle *,
 		const char *);
 int HIDDEN xbps_conf_init(struct xbps_handle *);
 
+/* hooks */
+void HIDDEN xbps_hooks_sort_path(xbps_array_t* hooks);
+int HIDDEN xbps_hooks_load_path( const char * , xbps_array_t *);
+const char* hook_dict_keystr(enum hook_dict_keys);
+const char* hook_oper_valstr(enum hook_oper_val);
+const char* hook_type_valstr(enum hook_type_val);
+const char* hook_when_valstr(enum hook_when_val);
+const char* hook_abrtonfail_val_str(enum hook_abrtonfail_val);
+const char* ttype_val_str(enum xbps_trans_type ttype);
+int HIDDEN xbps_hooks_load_data(struct xbps_handle *);
+int HIDDEN xbps_hooks_parse_file(struct xbps_handle * , xbps_dictionary_t );
+xbps_array_t HIDDEN xbps_hooks_parse_keyval(const char *);
+bool HIDDEN xbps_hooks_addvalue(xbps_dictionary_t hook_dict, xbps_string_t key, xbps_string_t val);
+bool HIDDEN xbps_hooks_chkdefvalues( xbps_string_t, xbps_string_t );
+bool HIDDEN xbps_hooks_isdupvalue( xbps_array_t , xbps_string_t );
+int HIDDEN xbps_hooks_exec_pre(struct xbps_handle *, const char*, xbps_trans_type_t);
+bool HIDDEN xbps_hook_chk_exec(struct xbps_handle *, xbps_dictionary_t , const char*,
+                               xbps_string_t );
+void HIDDEN xbps_hooks_exec_post(struct xbps_handle *xhp);
+void HIDDEN xbps_hooks_release(struct xbps_handle*);
 #endif /* !_XBPS_API_IMPL_H_ */
