@@ -191,6 +191,21 @@ state_cb(const struct xbps_state_cb_data *xscd, void *cbdata UNUSED)
 			syslog(LOG_ERR, "%s", xscd->desc);
 		}
 		break;
+    case XBPS_STATE_VALIDATE_HOOKS:
+            printf("\n[*] Validating xbps hooks\n");
+            break;
+    case XBPS_STATE_VALIDATING_HOOKS:
+        printf("==> %s: validating ...\n" , xscd->arg);
+        break;
+    case XBPS_STATE_PRE_TRANSACTION_HOOKS:
+        printf("\n[*] Executing pre transaction hooks\n");
+        break;
+    case XBPS_STATE_POST_TRANSACTION_HOOKS:
+        printf("\n[*] Executing post transaction hooks\n");
+        break;
+    case XBPS_STATE_EXECUTING_HOOK:
+        printf("==> %s : executing ...\n" , xscd->arg);
+        break;
 	default:
 		if (xscd->desc)
 			printf("%s\n", xscd->desc);

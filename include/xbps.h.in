@@ -94,6 +94,12 @@
 #define XBPS_CACHE_PATH		"var/cache/xbps"
 
 /**
+ * @def XBPS_HOOKS_PATH
+ * Default hooks PATH
+ */
+#define XBPS_HOOKS_PATH		XBPS_SYSDEFCONF_PATH "/hooks"
+
+/**
  * @def XBPS_PKGDB
  * Filename for the package database.
  */
@@ -339,7 +345,8 @@ typedef enum xbps_state {
 	XBPS_STATE_DOWNLOAD,
 	XBPS_STATE_VERIFY,
 	XBPS_STATE_FILES,
-	XBPS_STATE_REMOVE,
+    XBPS_STATE_REMOVE_HEAD,
+    XBPS_STATE_REMOVE,
 	XBPS_STATE_REMOVE_DONE,
 	XBPS_STATE_REMOVE_FILE,
 	XBPS_STATE_REMOVE_FILE_OBSOLETE,
@@ -380,7 +387,12 @@ typedef enum xbps_state {
 	XBPS_STATE_ALTGROUP_REMOVED,
 	XBPS_STATE_ALTGROUP_SWITCHED,
 	XBPS_STATE_ALTGROUP_LINK_ADDED,
-	XBPS_STATE_ALTGROUP_LINK_REMOVED
+    XBPS_STATE_ALTGROUP_LINK_REMOVED,
+    XBPS_STATE_VALIDATE_HOOKS,
+    XBPS_STATE_VALIDATING_HOOKS,
+    XBPS_STATE_PRE_TRANSACTION_HOOKS,
+    XBPS_STATE_POST_TRANSACTION_HOOKS,
+    XBPS_STATE_EXECUTING_HOOK
 } xbps_state_t;
 
 /**
@@ -542,6 +554,85 @@ struct xbps_unpack_cb_data {
 };
 
 /**
+ * @enum hook_dict_keys_t
+ *
+ * Integer representing the key to get data from hook dictionary.
+ * Attention: add new entry before 'XBPS_HOOK_UNKNOWN_KEY'
+ * */
+typedef enum hook_dict_keys {
+    XBPS_HOOK_TRIGGER_SEC_KEY,
+    XBPS_HOOK_OPERATION_KEY,
+    XBPS_HOOK_TYPE_KEY,
+    XBPS_HOOK_TARGET_KEY,
+    XBPS_HOOK_ACTION_SEC_KEY,
+    XBPS_HOOK_DESCRIPTION_KEY,
+    XBPS_HOOK_WHEN_KEY,
+    XBPS_HOOK_EXEC_KEY,
+    XBPS_HOOK_ABRTONFAIL_KEY,
+    XBPS_HOOK_FPATH_KEY,
+    XBPS_HOOK_FNAME_KEY,
+    XBPS_HOOK_EXEC_PRE_KEY,
+    XBPS_HOOK_EXEC_POST_KEY,
+    XBPS_HOOK_SKIP_KEY,
+    XBPS_HOOK_VALID_KEY,
+    XBPS_HOOK_ERROR_KEY,
+    XBPS_HOOK_UNKNOWN_KEY
+} hook_dict_keys_t;
+
+/**
+ * @enum hook_oper_val_t
+ *
+ * Integer representing the default values for "Operation" property
+ * of xbps hook configuration file
+ * Attention: add new entry before 'OPER_MAX'
+ */
+typedef enum hook_oper_val {
+    OPER_INSTALL,
+    OPER_REMOVE,
+    OPER_UPGRADE,
+    OPER_MAX
+} hook_oper_val_t;
+
+/**
+ * @enum hook_type_val_t
+ *
+ * Integer representing the default values for "Type" property
+ * of xbps hook configuration file
+ * Attention: add new entry before 'TYPE_MAX'
+ */
+typedef enum hook_type_val {
+    TYPE_PACKAGE,
+    TYPE_PATH,
+    TYPE_MAX
+} hook_type_val_t;
+
+/**
+ * @enum hook_when_val_t
+ *
+ * Integer representing the default values for "When" property
+ * of xbps hook configuration file
+ * Attention: add new entry before 'WHEN_MAX'
+ */
+typedef enum hook_when_val {
+    WHEN_PRE_TRANSACTION,
+    WHEN_POST_TRANSACTION,
+    WHEN_MAX
+} hook_when_val_t;
+
+/**
+ * @enum hook_ab_on_fail_val_t
+ *
+ * Integer representing the default values for "AbortOnFail" property
+ * of xbps hook configuration file
+ * Attention: add new entry before 'ABRT_ONFAIL_MAX'
+ */
+typedef enum hook_abrtonfail_val {
+    ABRT_ONFAIL_FALSE,
+    ABRT_ONFAIL_TRUE,
+    ABRT_ONFAIL_MAX
+} hook_abrtonfail_val_t;
+
+/**
  * @struct xbps_handle xbps.h "xbps.h"
  * @brief Generic XBPS structure handler for initialization.
  *
@@ -563,6 +654,14 @@ struct xbps_handle {
 	 * in the configuration file.
 	 */
 	xbps_array_t repositories;
+    /**
+     * @var hooks
+     *
+     * Proplib array of dictionaries wich contain the xbps hooks data.
+     * Each hook will be a dictionary which keys are
+     * defined in 'hook_dict_keys_t' enumerator
+     */
+    xbps_array_t hooks;
 	/**
 	 * @private
 	 */
@@ -657,6 +756,13 @@ struct xbps_handle {
 	 * If unset, defaults to \a XBPS_CACHE_PATH (relative to rootdir).
 	 */
 	char cachedir[XBPS_MAXPATH+sizeof(XBPS_CACHE_PATH)];
+    /**
+     * @var hooksdir
+     *
+     * Hooks directory to store xbps hooks.
+     * If unset, defaults to \a XBPS_HOOKS_PATH (relative to rootdir).
+     */
+    char hooksdir[XBPS_MAXPATH+sizeof(XBPS_HOOKS_PATH)];
 	/**
 	 * @var metadir
 	 *
