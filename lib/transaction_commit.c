@@ -63,10 +63,15 @@ xbps_transaction_commit(struct xbps_handle *xhp)
 	xbps_object_iterator_t iter;
 	xbps_trans_type_t ttype;
 	const char *pkgver = NULL;
-	int rv = 0;
-	bool update;
+	const char *pkgname = NULL;
+	int rv = 0, hooks_size = 0;
+	bool update, show_msgremove;
+	xbps_array_t *hooks = NULL;
+	xbps_dictionary_t hook_dict = NULL;
 
 	setlocale(LC_ALL, "");
+	show_msgremove = false;
+	hooks = &xhp->hooks;
 
 	assert(xbps_object_type(xhp->transd) == XBPS_TYPE_DICTIONARY);
 	/*
@@ -102,6 +107,28 @@ xbps_transaction_commit(struct xbps_handle *xhp)
 	}
 	if (xhp->flags & XBPS_FLAG_DOWNLOAD_ONLY) {
 		goto out;
+	}
+
+	/*
+	* Build complete xbps hooks path.
+	* If it fails, it has not to brokes transaction.
+	* Provide only debug information.
+	*/
+	if ((rv = xbps_hooks_load_path(xhp->hooksdir, &xhp->hooks)) != 0) {
+		xbps_dbg_printf(xhp, "[trans] failed to build complete hooks path '%s': "
+			"%s\n", xhp->hooksdir, strerror(rv));
+	}
+	else {
+		/* Sorting hooks alphabetically */
+		xbps_hooks_sort_path(&xhp->hooks);
+		/*
+		* Loading all xbps hooks data
+		* It will populates the array 'xhp->hooks' with the complete data
+		* We only can show an eventual configuration error
+		* If it fails, it has not to brokes the transaction.
+		* Provide only debug information.
+		*/
+		xbps_hooks_load_data(xhp);
 	}
 
 	/*
@@ -149,6 +176,13 @@ xbps_transaction_commit(struct xbps_handle *xhp)
 			 * Remove package.
 			 */
 			update = false;
+
+			/* Show remove msg (Header) once */
+			if (!show_msgremove) {
+				xbps_set_cb_state(xhp, XBPS_STATE_REMOVE_HEAD, 0, NULL, NULL);
+				show_msgremove = true;
+			}
+
 			xbps_dictionary_get_bool(obj, "remove-and-update", &update);
 			rv = xbps_remove_pkg(xhp, pkgver, update);
 			if (rv != 0) {
@@ -265,6 +299,32 @@ xbps_transaction_commit(struct xbps_handle *xhp)
 		} else {
 			xbps_set_cb_state(xhp, XBPS_STATE_INSTALL_DONE, 0,
 			    pkgver, NULL);
+		}
+	}
+	xbps_object_iterator_reset(iter);
+
+	/*
+	* Executing post transaction hooks
+	* If it fails, it has not to brokes transaction.
+	* Provide only debug information.
+	*/
+	/* Before execution cycle, initialize skip=false for all hooks */
+	hooks_size = (*hooks != NULL ? xbps_array_count(*hooks) : 0);
+	for (int i = 0; i < hooks_size; i++) {
+		hook_dict = xbps_array_get(*hooks, i);
+		assert(hook_dict);
+		xbps_dictionary_set_bool(hook_dict, hook_dict_keystr(XBPS_HOOK_SKIP_KEY), false);
+	}
+	while ((obj = xbps_object_iterator_next(iter)) != NULL) {
+		xbps_dictionary_get_cstring_nocopy(obj, "pkgver", &pkgver);
+		xbps_dictionary_get_cstring_nocopy(obj, "pkgname", &pkgname);
+		ttype = xbps_transaction_pkg_type(obj);
+		if (ttype == XBPS_TRANS_HOLD || ttype == XBPS_TRANS_CONFIGURE) {
+			continue;
+		}
+		rv = xbps_hooks_exec(xhp, pkgname, pkgver, ttype, "post");
+		if (rv != 0) {
+			xbps_dbg_printf(xhp, "error in post transaction hook: %s ", strerror(rv));
 		}
 	}
 

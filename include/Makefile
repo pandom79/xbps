@@ -10,7 +10,7 @@ all:
 install:
 	install -d $(DESTDIR)$(INCLUDEDIR)/xbps
 	install -m 644 $(INCS) $(DESTDIR)$(INCLUDEDIR)
-	for f in array bool data dictionary number object string; do \
+	for f in array bool data dictionary number object string stringutil; do \
 		install -m 644 xbps/xbps_$${f}.h $(DESTDIR)$(INCLUDEDIR)/xbps; \
 	done
 

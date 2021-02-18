@@ -51,6 +51,7 @@ usage(bool fail)
 	    " -f, --force                 Force package re-installation\n"
 	    "                             If specified twice, all files will be overwritten.\n"
 	    " -h, --help                  Show usage\n"
+	    " -H, --hooksdir <dir>        Path to hooksdir\n"
 	    " -i, --ignore-conf-repos     Ignore repositories defined in xbps.d\n"
 	    " -I, --ignore-file-conflicts Ignore detected file conflicts\n"
 	    " -U, --unpack-only           Unpack packages in transaction, do not configure them\n"
@@ -96,7 +97,7 @@ repo_import_key_cb(struct xbps_repo *repo, void *arg UNUSED, bool *done UNUSED)
 int
 main(int argc, char **argv)
 {
-	const char *shortopts = "AC:c:DdfhIiMnR:r:SuUVvy";
+	const char *shortopts = "AC:c:DdfhH:IiMnR:r:SuUVvy";
 	const struct option longopts[] = {
 		{ "automatic", no_argument, NULL, 'A' },
 		{ "config", required_argument, NULL, 'C' },
@@ -105,6 +106,7 @@ main(int argc, char **argv)
 		{ "download-only", no_argument, NULL, 'D' },
 		{ "force", no_argument, NULL, 'f' },
 		{ "help", no_argument, NULL, 'h' },
+		{ "hooksdir", required_argument, NULL, 'H' },
 		{ "ignore-conf-repos", no_argument, NULL, 'i' },
 		{ "ignore-file-conflicts", no_argument, NULL, 'I' },
 		{ "memory-sync", no_argument, NULL, 'M' },
@@ -122,12 +124,12 @@ main(int argc, char **argv)
 	};
 	struct xbps_handle xh;
 	struct xferstat xfer;
-	const char *rootdir, *cachedir, *confdir;
+	const char *rootdir, *cachedir, *hooksdir, *confdir;
 	int i, c, flags, rv, fflag = 0;
 	bool syncf, yes, force, drun, update;
 	int maxcols, eexist = 0;
 
-	rootdir = cachedir = confdir = NULL;
+	rootdir = cachedir = hooksdir = confdir = NULL;
 	flags = rv = 0;
 	syncf = yes = force = drun = update = false;
 
@@ -162,6 +164,9 @@ main(int argc, char **argv)
 		case 'h':
 			usage(false);
 			/* NOTREACHED */
+		case 'H':
+			hooksdir = optarg;
+			break;
 		case 'I':
 			flags |= XBPS_FLAG_IGNORE_FILE_CONFLICTS;
 			break;
@@ -217,6 +222,8 @@ main(int argc, char **argv)
 		xbps_strlcpy(xh.rootdir, rootdir, sizeof(xh.rootdir));
 	if (cachedir)
 		xbps_strlcpy(xh.cachedir, cachedir, sizeof(xh.cachedir));
+	if (hooksdir)
+		xbps_strlcpy(xh.hooksdir, hooksdir, sizeof(xh.hooksdir));
 	if (confdir)
 		xbps_strlcpy(xh.confdir, confdir, sizeof(xh.confdir));
 	xh.flags = flags;
