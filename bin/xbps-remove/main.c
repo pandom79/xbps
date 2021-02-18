@@ -39,6 +39,7 @@
 #include "../xbps-install/defs.h"
 #include "defs.h"
 
+
 static void __attribute__((noreturn))
 usage(bool fail)
 {
@@ -52,8 +53,10 @@ usage(bool fail)
 	    "                           unresolved shared libraries\n"
 	    " -f, --force               Force package files removal\n"
 	    " -h, --help                Show usage\n"
+	    " -H, --hooksdir <dir>      Path to hooksdir\n"
 	    " -n, --dry-run             Dry-run mode\n"
 	    " -O, --clean-cache         Remove obsolete packages in cachedir\n"
+	    " -k, --keep <n>            Keep n previous versions in cachedir\n"
 	    " -o, --remove-orphans      Remove package orphans\n"
 	    " -R, --recursive           Recursively remove dependencies\n"
 	    " -r, --rootdir <dir>       Full path to rootdir\n"
@@ -75,8 +78,11 @@ state_cb_rm(const struct xbps_state_cb_data *xscd, void *cbdata UNUSED)
 
 	switch (xscd->state) {
 	/* notifications */
+	case XBPS_STATE_REMOVE_HEAD:
+		printf("\n[*] Removing packages\n");
+		break;
 	case XBPS_STATE_REMOVE:
-		printf("Removing `%s' ...\n", xscd->arg);
+		printf("%s: removing ...\n", xscd->arg);
 		break;
 	/* success */
 	case XBPS_STATE_REMOVE_FILE:
@@ -85,15 +91,15 @@ state_cb_rm(const struct xbps_state_cb_data *xscd, void *cbdata UNUSED)
 			printf("%s\n", xscd->desc);
 		break;
 	case XBPS_STATE_REMOVE_DONE:
-		printf("Removed `%s' successfully.\n", xscd->arg);
+		printf("%s: removed successfully.\n", xscd->arg);
 		if (slog) {
-			syslog(LOG_NOTICE, "Removed `%s' successfully "
-			    "(rootdir: %s).", xscd->arg,
-			    xscd->xhp->rootdir);
+			syslog(LOG_NOTICE, "%s: removed successfully "
+				"(rootdir: %s).", xscd->arg,
+				xscd->xhp->rootdir);
 		}
 		break;
 	case XBPS_STATE_SHOW_REMOVE_MSG:
-                printf("%s: pre-remove message:\n", xscd->arg);
+		printf("%s: pre-remove message:\n", xscd->arg);
 		printf("========================================================================\n");
 		printf("%s", xscd->desc);
 		printf("========================================================================\n");
@@ -128,6 +134,21 @@ state_cb_rm(const struct xbps_state_cb_data *xscd, void *cbdata UNUSED)
 				syslog(LOG_NOTICE, "%s", xscd->desc);
 		}
 		break;
+	case XBPS_STATE_VALIDATE_HOOKS:
+		printf("\n[*] Validating xbps hooks\n");
+		break;
+	case XBPS_STATE_VALIDATING_HOOKS:
+		printf("==> %s: validating ...\n" , xscd->arg);
+		break;
+	case XBPS_STATE_PRE_TRANSACTION_HOOKS:
+		printf("\n[*] Executing pre transaction hooks\n");
+		break;
+	case XBPS_STATE_POST_TRANSACTION_HOOKS:
+		printf("\n[*] Executing post transaction hooks\n");
+		break;
+	case XBPS_STATE_EXECUTING_HOOK:
+		printf("==> %s : executing ...\n" , xscd->arg);
+		break;
 	default:
 		break;
 	}
@@ -158,7 +179,7 @@ remove_pkg(struct xbps_handle *xhp, const char *pkgname, bool recursive)
 int
 main(int argc, char **argv)
 {
-	const char *shortopts = "C:c:dFfhnOoRr:vVy";
+	const char *shortopts = "C:c:dFfhH:nOk:oRr:vVy";
 	const struct option longopts[] = {
 		{ "config", required_argument, NULL, 'C' },
 		{ "cachedir", required_argument, NULL, 'c' },
@@ -166,8 +187,10 @@ main(int argc, char **argv)
 		{ "force-revdeps", no_argument, NULL, 'F' },
 		{ "force", no_argument, NULL, 'f' },
 		{ "help", no_argument, NULL, 'h' },
+		{ "hooksdir", required_argument, NULL, 'H' },
 		{ "dry-run", no_argument, NULL, 'n' },
 		{ "clean-cache", no_argument, NULL, 'O' },
+	    { "keep", required_argument, NULL, 'k' },
 		{ "remove-orphans", no_argument, NULL, 'o' },
 		{ "recursive", no_argument, NULL, 'R' },
 		{ "rootdir", required_argument, NULL, 'r' },
@@ -177,14 +200,15 @@ main(int argc, char **argv)
 		{ NULL, 0, NULL, 0 }
 	};
 	struct xbps_handle xh;
-	const char *rootdir, *cachedir, *confdir;
+	const char *rootdir, *cachedir, *hooksdir, *confdir;
 	int c, flags, rv;
 	bool yes, drun, recursive, clean_cache, orphans;
-	int maxcols, missing;
+	int maxcols, missing, keep;
 
-	rootdir = cachedir = confdir = NULL;
+	rootdir = cachedir = hooksdir = confdir = NULL;
 	flags = rv = 0;
 	drun = recursive = clean_cache = yes = orphans = false;
+	keep = 1;
 
 	while ((c = getopt_long(argc, argv, shortopts, longopts, NULL)) != -1) {
 		switch (c) {
@@ -206,11 +230,20 @@ main(int argc, char **argv)
 		case 'h':
 			usage(false);
 			/* NOTREACHED */
+		case 'H':
+			hooksdir = optarg;
+			break;
 		case 'n':
 			drun = true;
 			break;
 		case 'O':
 			clean_cache = true;
+			break;
+		case 'k':
+			if (optarg && check_keep(optarg))
+				keep = (int)strtol(optarg, &optarg, 10);
+			else
+				usage(true);
 			break;
 		case 'o':
 			orphans = true;
@@ -250,6 +283,8 @@ main(int argc, char **argv)
 		xbps_strlcpy(xh.rootdir, rootdir, sizeof(xh.rootdir));
 	if (cachedir)
 		xbps_strlcpy(xh.cachedir, cachedir, sizeof(xh.cachedir));
+	if (hooksdir)
+		xbps_strlcpy(xh.hooksdir, hooksdir, sizeof(xh.hooksdir));
 	if (confdir)
 		xbps_strlcpy(xh.confdir, confdir, sizeof(xh.confdir));
 
@@ -264,7 +299,12 @@ main(int argc, char **argv)
 	maxcols = get_maxcols();
 
 	if (clean_cache) {
-		rv = clean_cachedir(&xh, drun);
+		if (keep == 0 && !yes &&
+			!yesno("Warning: will be removed all previous versions of the packages!\nDo you want to continue?")) {
+				printf("Aborting!\n");
+				exit(EXIT_SUCCESS);
+		}
+		rv = clean_cachedir(&xh, drun, keep);
 		if (!orphans || rv)
 			exit(rv);;
 	}

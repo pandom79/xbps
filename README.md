@@ -41,6 +41,8 @@ to handle binary packages and repositories. Some highlights:
  * Ability to **execute pre/post install/remove/update scriptlets**.
  * Ability to **check package integrity**: missing files, hashes, missing or
    unresolved (reverse)dependencies, dangling or modified symlinks, etc.
+ * <a href="#Xbps-hooks">New feature</a>: Ability to **execute xbps hooks** pre and post transaction.  
+   Powered by [Domenico Panella](mailto:pandom79@gmail.com) 
 
 XBPS contains an almost complete test suite, currently with ~200 test cases,
 and its number is growing daily! If you find any issue and you can reproduce it,
@@ -426,4 +428,192 @@ xbps-query -o \* | cut -d ' ' -f2 | sort > $pkg
 find /boot /etc /opt /usr /var -xdev -type f -print | sort > $fs
 
 comm -23 $fs $pkg
+```
+
+
+<br/>
+
+### Xbps hooks
+Xbps can run pre and post transaction hooks from the **/usr/share/xbps.d/hooks** directory.  
+A different directory can be specified with the **-H** or **--hooksdir** option  
+for **xbps-install** and **xbps-remove** commands, which defaults to **/usr/share/xbps.d/hooks**.  
+Hook file names must be suffixed with **".hook"**.  
+Xbps hooks are not interactive.  
+A hook can be executed at most two times: once in PreTransaction and once in PostTransaction.  
+Following show the xbps hook file format:  
+
+```
+[Trigger] (Required, Repeatable)  
+Operation = Install|Upgrade|Remove (Required, Repeatable)  
+Type = Path|Package (Required, Not Repeatable)  
+Target = <Path|PkgName> (Required, Repeatable)  
+  
+[Action] (Required, Not Repeatable)  
+Description = (Required, Not Repeatable, maxlength=70)  
+When = PreTransaction|PostTransaction (Required, Repeatable)  
+Exec = command (Required, Not Repeatable)  
+AbortOnFail = True|False (Optional, PreTransaction only, Not Repeatable)
+```
+
+**Explanation**:
+
+
+**[Trigger]**  
+Hooks must contain at least one [Trigger] section that determines which transactions will cause the hook to run.  
+
+* **Operation** = Install|Upgrade|Remove  
+Select the type of operation to match targets against.  
+May be specified multiple times.  
+Installations are considered an upgrade if the new package version is actually greater than the currently installed version.  
+For Path triggers, this is true even if the file changes ownership from one package to another. Required.  
+
+* **Type** = Path|Package  
+Select whether targets are matched against transaction packages or files.  
+Required.  
+
+* **Target** = <path|package>  
+The path or package name to match against the active transaction.  
+Paths refer to the files in the package archive.  
+Shell-style glob patterns are allowed.  
+It is possible to invert matches by prepending a target with an exclamation mark.  
+Can be specified a partial path too omitting the final back slash.  
+An example: "/usr/share/fonts".  
+In this case the hook will be executed for all font's packages.  
+May be specified multiple times. Required.  
+
+
+**[Action]**  
+
+* **Description** = …  
+An description that describes the action being taken by the hook for use in front-end output.  
+The maximium length is 70 characters.  
+It will automatically truncated if exceeds it.  
+
+* **Exec** = <command>
+Command to run. 
+
+* **When** = PreTransaction|PostTransaction  
+When to run the hook. May be specified multiple times. Required.
+
+* **AbortOnFail** = True|False  
+Causes the transaction to be aborted if the hook exits non-zero.  
+The default value is False.  
+Only applies to PreTransaction hooks.  
+<br/>
+
+#### Validation process
+This process can be executed through two modes:  
+<br/>
+* **Transaction**  
+When we run an **xbps-install** or **xbps-remove** operation, the validation process at most 
+can only show one error for each xbps hook.  
+
+* **Standalone**  
+This mode uses the **xbps-hook** tool which will show all the errors for all xbps hooks.  
+At the end it will show a "Summary" of the xbps hooks state too.
+<br/>
+
+#### Examples
+
+Performs the validation of the default folder (**/usr/share/xbps.d/hooks**) of the xbps hooks :  
+
+```
+xbps-hook 
+
+[*] Validating xbps hooks
+
+==> 00_snapper-pre.hook : [ PASSED ]
+------------------------------------------------------
+==> 01-backup-boot.hook : [ PASSED ]
+------------------------------------------------------
+==> 10_snap-xbps-removal.hook : [ PASSED ]
+------------------------------------------------------
+==> fwupd.hook : [ PASSED ]
+------------------------------------------------------
+==> nano.hook : [ PASSED ]
+------------------------------------------------------
+==> xed.hook : [ PASSED ]
+------------------------------------------------------
+==> zz_snapper-post.hook : [ PASSED ]
+------------------------------------------------------
+
+Summary
+
+Total xbps hooks = 7
+Total passed = 7
+Total failed = 0
+Total errors = 0
+
+```
+
+Performs the validation of a specific xbps hook:  
+
+```
+xbps-hook -f /home/domenico/Documenti/Sviluppo/new-xbps/hooks/nano.hook 
+
+[*] Validating xbps hooks
+
+==> nano.hook : [ FAILED ]
+4 errors found
+
+:: Error occurred at line : 2
+An incorrect value for the 'Operation' property! 
+The accepted values are <Install|Upgrade|Remove> (Required, Repeatable)
+ 
+:: Error occurred at line : 16
+Duplicate value for the 'When' property!
+ 
+:: Error occurred at line : 17
+An incorrect occurences number for the 'When' property! 
+The accepted values are <PreTransaction|PostTransaction> (Required, Repeatable)
+ 
+:: Error occurred at line : 13
+The 'Exec' property for the '[Action]' section is required!
+ 
+------------------------------------------------------
+
+Summary
+
+Total xbps hooks = 1
+Total passed = 0
+Total failed = 1
+Total errors = 4
+
+Please, consult the documentation to fix them
+
+```
+
+Performs the xbps hooks validation from specific folder:  
+
+```
+xbps-hook -H /home/domenico/Documenti/Sviluppo/new-xbps/hooks/
+
+[*] Validating xbps hooks
+
+==> nano.hook : [ FAILED ]
+1 errors found
+
+:: Error occurred at line : 13
+The 'Exec' property for the '[Action]' section is required!
+ 
+------------------------------------------------------
+==> xed.hook : [ FAILED ]
+2 errors found
+
+:: Error occurred at line : 1
+The 'Target' property for the '[Trigger]' section is required!
+ 
+:: The '[Action]' section is required!
+ 
+------------------------------------------------------
+
+Summary
+
+Total xbps hooks = 2
+Total passed = 0
+Total failed = 2
+Total errors = 3
+
+Please, consult the documentation to fix them
+
 ```

@@ -69,7 +69,7 @@ int	index_add(struct xbps_handle *, int, int, char **, bool, const char *);
 int	index_clean(struct xbps_handle *, const char *, bool, const char *);
 
 /* From remove-obsoletes.c */
-int	remove_obsoletes(struct xbps_handle *, const char *);
+int	remove_obsoletes(struct xbps_handle *, const char *, int);
 
 /* From sign.c */
 int	sign_repo(struct xbps_handle *, const char *, const char *,

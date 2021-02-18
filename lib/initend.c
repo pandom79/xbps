@@ -116,6 +116,26 @@ xbps_init(struct xbps_handle *xhp)
 	}
 	assert(*xhp->native_arch);
 
+	xbps_fetch_set_cache_connection(XBPS_FETCH_CACHECONN, XBPS_FETCH_CACHECONN_HOST);
+
+	/* process xbps.d directories */
+	if ((rv = xbps_conf_init(xhp)) != 0)
+		return rv;
+
+	/* Set hooksdir */
+	if (xhp->hooksdir[0] == '\0') {
+		if (xbps_path_join(xhp->hooksdir, sizeof xhp->hooksdir,
+			xhp->rootdir, XBPS_HOOKS_PATH, (char *)NULL) == -1)
+			return ENOBUFS;
+	} else if (xhp->hooksdir[0] != '/') {
+		/* relative path */
+		if (xbps_path_prepend(xhp->hooksdir, sizeof xhp->hooksdir,
+			xhp->rootdir) == -1)
+			return ENOBUFS;
+	}
+	if (xbps_path_clean(xhp->hooksdir) == -1)
+		return ENOTSUP;
+
 	/* Set cachedir */
 	if (xhp->cachedir[0] == '\0') {
 		if (xbps_path_join(xhp->cachedir, sizeof xhp->cachedir,
@@ -147,6 +167,7 @@ xbps_init(struct xbps_handle *xhp)
 	xbps_dbg_printf(xhp, "rootdir=%s\n", xhp->rootdir);
 	xbps_dbg_printf(xhp, "metadir=%s\n", xhp->metadir);
 	xbps_dbg_printf(xhp, "cachedir=%s\n", xhp->cachedir);
+	xbps_dbg_printf(xhp, "hooksdir=%s\n", xhp->hooksdir);
 	xbps_dbg_printf(xhp, "confdir=%s\n", xhp->confdir);
 	xbps_dbg_printf(xhp, "sysconfdir=%s\n", xhp->sysconfdir);
 	xbps_dbg_printf(xhp, "syslog=%s\n", xhp->flags & XBPS_FLAG_DISABLE_SYSLOG ? "false" : "true");
@@ -171,6 +192,8 @@ void
 xbps_end(struct xbps_handle *xhp)
 {
 	assert(xhp);
+	if (xhp->hooks != NULL)
+		xbps_hooks_release(xhp);
 
 	xbps_pkgdb_release(xhp);
 }
