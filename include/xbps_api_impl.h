@@ -144,6 +144,7 @@ int HIDDEN xbps_repo_sync(struct xbps_handle *, const char *);
 int HIDDEN xbps_file_hash_check_dictionary(struct xbps_handle *,
 		xbps_dictionary_t, const char *, const char *);
 int HIDDEN xbps_file_exec(struct xbps_handle *, const char *, ...);
+int pfcexec_args(struct xbps_handle *xhp, const char *file, char **argv);
 void HIDDEN xbps_set_cb_fetch(struct xbps_handle *, off_t, off_t, off_t,
 		const char *, bool, bool, bool);
 int HIDDEN xbps_set_cb_state(struct xbps_handle *, xbps_state_t, int,
@@ -160,5 +161,28 @@ xbps_array_t HIDDEN xbps_get_pkg_fulldeptree(struct xbps_handle *,
 struct xbps_repo HIDDEN *xbps_regget_repo(struct xbps_handle *,
 		const char *);
 int HIDDEN xbps_conf_init(struct xbps_handle *);
+
+/* hooks */
+void HIDDEN xbps_hooks_sort_path(xbps_array_t* hooks);
+int HIDDEN xbps_hooks_load_path( const char * , xbps_array_t *);
+const char* hook_dict_keystr(enum hook_dict_keys);
+const char* hook_type_valstr(enum hook_type_val);
+const char* hook_when_valstr(enum hook_when_val);
+const char* ttype_val_str(enum xbps_trans_type ttype);
+int HIDDEN xbps_hooks_load_data(struct xbps_handle *);
+int HIDDEN xbps_hooks_parse_file(struct xbps_handle* xhp, xbps_dictionary_t hook_dict);
+xbps_string_t HIDDEN xbps_hooks_chk_keyorder(int, int);
+xbps_array_t HIDDEN xbps_hooks_parse_keyval(const char *);
+xbps_string_t HIDDEN xbps_hooks_error_desc( const char* mess, int numline );
+bool HIDDEN xbps_hooks_addvalue(xbps_dictionary_t, xbps_string_t, xbps_string_t, int);
+bool HIDDEN xbps_hooks_chkdefvalues( int, xbps_string_t, int, int );
+bool HIDDEN xbps_hooks_isdupvalue( xbps_array_t , xbps_string_t );
+int HIDDEN xbps_hooks_exec(struct xbps_handle *, const char *, const char *, xbps_trans_type_t,
+                           const char *);
+bool HIDDEN xbps_hook_chk_exec(struct xbps_handle *, xbps_dictionary_t , const char*, const char* );
+char** xbps_hooks_split_cmdline(const char *str);
+void HIDDEN xbps_hooks_rel_cmdline(char **cmdline);
+bool HIDDEN xbps_hooks_chk_target(struct xbps_handle* , const char* , const char* );
+void HIDDEN xbps_hooks_release(struct xbps_handle*);
 
 #endif /* !_XBPS_API_IMPL_H_ */

@@ -932,6 +932,68 @@ xbps_string_equals_cstring(xbps_string_t s, const char *ss)
 	return prop_string_equals_cstring(s, ss);
 }
 
+xbps_string_t
+xbps_string_toupper( xbps_string_t str )
+{
+	xbps_string_t newstr = NULL;
+	if ( str != NULL ){
+		char* value = xbps_string_cstring(str);
+		assert(value);
+		toupperstr( value );
+		/* Create new */
+		newstr = xbps_string_create_cstring(value);
+		assert(newstr);
+		/* Release value */
+		free(value);
+		value = NULL;
+	}
+	return newstr;
+}
+
+char*
+xbps_string_substr_cstring(const char *src, int m, int n)
+{
+	int len = 0;
+	char *dest = NULL;
+
+	len = n - m;
+	dest = (char*)malloc(sizeof(char) * (len + 1));
+	for (int i = m; i < n && (*(src + i) != '\0'); i++) {
+		*dest = *(src + i);
+		dest++;
+	}
+	*dest = '\0';
+	return dest - len;
+}
+
+xbps_string_t
+xbps_string_substr(const char *src, int m, int n)
+{
+	char *str = NULL;
+	xbps_string_t ret = NULL;
+
+	str = xbps_string_substr_cstring(src, m, n);
+	assert(str);
+	ret = xbps_string_create_cstring(str);
+	assert(ret);
+	free(str);
+	str = NULL;
+
+	return ret;
+}
+
+bool
+xbps_string_starts_with(const char* str, const char* substr)
+{
+	bool found = false;
+	if (str != NULL) {
+		if (strncmp(str, substr, strlen(substr)) == 0) {
+			found = true;
+		}
+	}
+	return found;
+}
+
 /* xbps specific helpers */
 xbps_array_t
 xbps_plist_array_from_file(struct xbps_handle *xhp, const char *f)

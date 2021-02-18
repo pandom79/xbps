@@ -88,6 +88,52 @@ pfcexec(struct xbps_handle *xhp, const char *file, const char **argv)
 	return WEXITSTATUS(status);
 }
 
+int
+pfcexec_args(struct xbps_handle *xhp, const char *file, char **argv)
+{
+	pid_t child;
+	int status;
+
+	child = fork();
+	switch (child) {
+	case 0:
+		/*
+		 * If rootdir != / and uid==0 and bin/sh exists,
+		 * change root directory and exec command.
+		 */
+		if (strcmp(xhp->rootdir, "/")) {
+			if ((geteuid() == 0) && (access("bin/sh", X_OK) == 0)) {
+				if (chroot(xhp->rootdir) == -1) {
+					xbps_dbg_printf(xhp, "%s: chroot() "
+						"failed: %s\n", *argv, strerror(errno));
+					_exit(errno);
+				}
+				if (chdir("/") == -1) {
+					xbps_dbg_printf(xhp, "%s: chdir() "
+						"failed: %s\n", *argv, strerror(errno));
+					_exit(errno);
+				}
+			}
+		}
+		umask(022);
+		(void)execv(file, __UNCONST(argv));
+		_exit(errno);
+		/* NOTREACHED */
+	case -1:
+		return -1;
+	}
+
+	while (waitpid(child, &status, 0) < 0) {
+		if (errno != EINTR)
+			return -1;
+	}
+
+	if (!WIFEXITED(status))
+		return -1;
+
+	return WEXITSTATUS(status);
+}
+
 static int
 vfcexec(struct xbps_handle *xhp, const char *arg, va_list ap)
 {
