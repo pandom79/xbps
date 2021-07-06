@@ -234,7 +234,7 @@ rcv_sh_substitute(rcv_t *rcv, const char *str, size_t len)
 					cmd = NULL;
 					continue;
 				} else if (*p == '{') {
-					for (ref = ++p; *p && p < str+len && (isalnum(*p) || *p == '_'); p++)
+					for (ref = ++p; *p && p < str+len && (isalnum((unsigned char)*p) || *p == '_'); p++)
 						;
 					reflen = p-ref;
 					switch (*p) {
@@ -253,7 +253,7 @@ rcv_sh_substitute(rcv_t *rcv, const char *str, size_t len)
 						goto err1;
 					}
 				} else {
-					for (ref = p; *p && p < str+len && (isalnum(*p) || *p == '_'); p++)
+					for (ref = p; *p && p < str+len && (isalnum((unsigned char)*p) || *p == '_'); p++)
 						;
 					reflen = p-ref;
 					p--;
@@ -349,7 +349,7 @@ rcv_get_pkgver(rcv_t *rcv)
 				vlen--;
 			}
 			vlen--;
-			while (isspace(v[vlen-1])) {
+			while (isspace((unsigned char)v[vlen-1])) {
 				vlen--;
 			}
 		}
@@ -636,7 +636,7 @@ rcv_process_dir(rcv_t *rcv, rcv_proc_func process)
 		if (rcv->show_removed)
 			xbps_dictionary_set_bool(rcv->templates, result->d_name, true);
 
-		if (S_ISLNK(st.st_mode) != 0)
+		if (S_ISLNK(st.st_mode) != 0 && !rcv->installed)
 			continue;
 
 		snprintf(filename, sizeof(filename), "%s/template", result->d_name);

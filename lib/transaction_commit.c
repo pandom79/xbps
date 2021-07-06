@@ -56,9 +56,57 @@
  * data type is specified on its edge, i.e string, array, integer, dictionary.
  */
 
+static int
+run_post_remove_scripts(struct xbps_handle *xhp, xbps_array_t remove_scripts)
+{
+	int rv = 0;
+
+	for (unsigned int i = 0; i < xbps_array_count(remove_scripts); i++) {
+		xbps_dictionary_t dict;
+		bool update = false;
+		xbps_data_t script = NULL;
+		const char *pkgver = NULL;
+		const void *buf;
+		size_t buflen;
+
+		dict = xbps_array_get(remove_scripts, i);
+		assert(dict);
+
+		xbps_dictionary_get_cstring_nocopy(dict, "pkgver", &pkgver);
+		assert(pkgver);
+
+		xbps_dictionary_get_bool(dict, "update", &update);
+
+		script = xbps_dictionary_get(dict, "remove-script");
+		assert(script);
+
+		buf = xbps_data_data_nocopy(script);
+		buflen = xbps_data_size(script);
+		rv = xbps_pkg_exec_buffer(xhp, buf, buflen, pkgver, "post", update);
+		if (rv != 0) {
+			xbps_set_cb_state(xhp, XBPS_STATE_TRANS_FAIL, rv, pkgver,
+			    "%s: [trans] REMOVE script failed to execute pre ACTION: %s",
+			    pkgver, strerror(rv));
+			goto out;
+		}
+		rv = xbps_pkg_exec_buffer(xhp, buf, buflen, pkgver, "purge", update);
+		if (rv != 0) {
+			xbps_set_cb_state(xhp, XBPS_STATE_TRANS_FAIL, rv, pkgver,
+			    "%s: [trans] REMOVE script failed to execute pre ACTION: %s",
+			    pkgver, strerror(rv));
+			goto out;
+		}
+	}
+
+out:
+	return rv;
+}
+
 int
 xbps_transaction_commit(struct xbps_handle *xhp)
 {
+	xbps_array_t remove_scripts;
+	xbps_dictionary_t pkgdb_pkgd;
 	xbps_object_t obj;
 	xbps_object_iterator_t iter;
 	xbps_trans_type_t ttype;
@@ -72,6 +120,15 @@ xbps_transaction_commit(struct xbps_handle *xhp)
 	setlocale(LC_ALL, "");
 	show_msgremove = false;
 	hooks = &xhp->hooks;
+
+	/*
+	 * Store remove scripts and pkgver in this array so
+	 * that we can run them after the package has been removed
+	 * from the package database.
+	 */
+	remove_scripts = xbps_array_create();
+	if (remove_scripts == NULL)
+		return errno ? errno : ENOMEM;
 
 	assert(xbps_object_type(xhp->transd) == XBPS_TYPE_DICTIONARY);
 	/*
@@ -136,6 +193,15 @@ xbps_transaction_commit(struct xbps_handle *xhp)
 	}
 
 	/*
+	 * Internalize metadata of downloaded binary packages.
+	 */
+	if ((rv = xbps_transaction_internalize(xhp, iter)) < 0) {
+		xbps_dbg_printf(xhp, "[trans] failed to internalize transaction binpkgs: "
+		    "%s\n", strerror(-rv));
+		goto out;
+	}
+
+	/*
 	 * Collect files in the transaction and find some issues
 	 * like multiple packages installing the same file.
 	 */
@@ -171,6 +237,98 @@ xbps_transaction_commit(struct xbps_handle *xhp)
 		    xhp->rootdir, strerror(errno));
 		goto out;
 	}
+
+	/*
+	 * Run all pre-remove scripts.
+	 * And store the remove scripts in remove_scripts
+	 * so we can execute the post and purge actions
+	 * after the package is removed from the pkgdb.
+	 */
+	while ((obj = xbps_object_iterator_next(iter)) != NULL) {
+		xbps_dictionary_t dict;
+		xbps_data_t script = NULL;
+		const char *pkgdb_pkgver;
+
+		xbps_dictionary_get_cstring_nocopy(obj, "pkgver", &pkgver);
+		xbps_dictionary_get_cstring_nocopy(obj, "pkgname", &pkgname);
+
+		ttype = xbps_transaction_pkg_type(obj);
+		if (ttype == XBPS_TRANS_INSTALL || ttype == XBPS_TRANS_HOLD || ttype == XBPS_TRANS_CONFIGURE) {
+			xbps_dbg_printf(xhp, "%s: skipping pre-remove script for "
+			    "%s: %d\n", __func__, pkgver, ttype);
+			continue;
+		}
+
+		if ((pkgdb_pkgd = xbps_pkgdb_get_pkg(xhp, pkgname)) == NULL) {
+			rv = ENOENT;
+			xbps_dbg_printf(xhp, "[trans] cannot find %s in pkgdb: %s\n",
+			    pkgname, strerror(rv));
+			goto out;
+		}
+
+		script = xbps_dictionary_get(pkgdb_pkgd, "remove-script");
+		if (script == NULL)
+			continue;
+
+		xbps_dictionary_get_cstring_nocopy(pkgdb_pkgd, "pkgver", &pkgdb_pkgver);
+		assert(pkgdb_pkgver);
+
+		update = ttype == XBPS_TRANS_UPDATE;
+
+		dict = xbps_dictionary_create();
+		if (dict == NULL) {
+			rv = errno ? errno : ENOMEM;
+			goto out;
+		}
+		if (!xbps_dictionary_set_cstring(dict, "pkgver", pkgdb_pkgver)) {
+			rv = errno ? errno : ENOMEM;
+			goto out;
+		}
+		if (!xbps_dictionary_set_bool(dict, "update", update)) {
+			rv = errno ? errno : ENOMEM;
+			goto out;
+		}
+		if (!xbps_dictionary_set(dict, "remove-script", script)) {
+			rv = errno ? errno : ENOMEM;
+			goto out;
+		}
+		if (!xbps_array_add(remove_scripts, dict)) {
+			rv = errno ? errno : ENOMEM;
+			goto out;
+		}
+		xbps_object_release(dict);
+		rv = xbps_pkg_exec_script(xhp, pkgdb_pkgd, "remove-script", "pre", update);
+		if (rv != 0) {
+			xbps_set_cb_state(xhp, XBPS_STATE_TRANS_FAIL, rv, pkgver,
+			    "%s: [trans] REMOVE script failed to execute pre ACTION: %s",
+			    pkgver, strerror(rv));
+			goto out;
+		}
+	}
+	xbps_object_iterator_reset(iter);
+
+	/*
+	 * Run all pre-install scripts.
+	 */
+	while ((obj = xbps_object_iterator_next(iter)) != NULL) {
+		xbps_dictionary_get_cstring_nocopy(obj, "pkgver", &pkgver);
+		ttype = xbps_transaction_pkg_type(obj);
+		if (ttype == XBPS_TRANS_REMOVE || ttype == XBPS_TRANS_HOLD) {
+			xbps_dbg_printf(xhp, "%s: skipping pre-install script for "
+			    "%s: %d\n", __func__, pkgver, ttype);
+			continue;
+		}
+		rv = xbps_pkg_exec_script(xhp, obj, "install-script", "pre", ttype == XBPS_TRANS_UPDATE);
+		if (rv != 0) {
+			xbps_set_cb_state(xhp, XBPS_STATE_TRANS_FAIL, rv, pkgver,
+			    "%s: [trans] INSTALL script failed to execute pre ACTION: %s",
+			    pkgver, strerror(rv));
+			goto out;
+		}
+	}
+	xbps_object_iterator_reset(iter);
+
+
 	while ((obj = xbps_object_iterator_next(iter)) != NULL) {
 		xbps_dictionary_get_cstring_nocopy(obj, "pkgver", &pkgver);
 
@@ -192,18 +350,6 @@ xbps_transaction_commit(struct xbps_handle *xhp)
 			if (rv != 0) {
 				xbps_dbg_printf(xhp, "[trans] failed to "
 				    "remove %s: %s\n", pkgver, strerror(rv));
-				goto out;
-			}
-			continue;
-
-		} else if (ttype == XBPS_TRANS_CONFIGURE) {
-			/*
-			 * Reconfigure pending package.
-			 */
-			rv = xbps_configure_pkg(xhp, pkgver, false, false);
-			if (rv != 0) {
-				xbps_dbg_printf(xhp, "[trans] failed to "
-				    "configure %s: %s\n", pkgver, strerror(rv));
 				goto out;
 			}
 			continue;
@@ -270,15 +416,23 @@ xbps_transaction_commit(struct xbps_handle *xhp)
 		goto out;
 
 	/*
-	 * Configure all unpacked packages.
+	 * Run all post and purge-remove scripts.
+	 */
+	rv = run_post_remove_scripts(xhp, remove_scripts);
+	if (rv < 0) {
+		rv = -rv;
+		goto out;
+	}
+
+	/*
+	 * Configure all unpacked packages (post-install).
 	 */
 	xbps_set_cb_state(xhp, XBPS_STATE_TRANS_CONFIGURE, 0, NULL, NULL);
 
 	while ((obj = xbps_object_iterator_next(iter)) != NULL) {
 		xbps_dictionary_get_cstring_nocopy(obj, "pkgver", &pkgver);
 		ttype = xbps_transaction_pkg_type(obj);
-		if (ttype == XBPS_TRANS_REMOVE || ttype == XBPS_TRANS_HOLD ||
-		    ttype == XBPS_TRANS_CONFIGURE) {
+		if (ttype == XBPS_TRANS_REMOVE || ttype == XBPS_TRANS_HOLD) {
 			xbps_dbg_printf(xhp, "%s: skipping configuration for "
 			    "%s: %d\n", __func__, pkgver, ttype);
 			continue;
@@ -333,6 +487,7 @@ xbps_transaction_commit(struct xbps_handle *xhp)
 	}
 
 out:
+	xbps_object_release(remove_scripts);
 	xbps_object_iterator_release(iter);
 	if (rv == 0) {
 		/* Force a pkgdb write for all unpacked pkgs in transaction */

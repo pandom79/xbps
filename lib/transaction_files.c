@@ -51,6 +51,8 @@ struct item_transaction {
 		const char *target;
 		uint64_t size;
 		enum type type;
+		/* index is the index of the package update/install/removal in the transaction
+		 * and is used to decide which package should remove the given file or dir */
 		unsigned int index;
 		bool preserve;
 		bool update;
@@ -437,7 +439,16 @@ collect_file(struct xbps_handle *xhp, const char *file, size_t size,
 		} else if (type == TYPE_DIR && item->old.type == TYPE_DIR) {
 			/*
 			 * Multiple packages removing the same directory.
+			 * Record the last package to remove this directory.
 			 */
+			if (idx < item->old.index || item->old.preserve)
+				return 0;
+			item->old.pkgname = pkgname;
+			item->old.pkgver = pkgver;
+			item->old.index = idx;
+			item->old.preserve = preserve;
+			item->old.update = update;
+			item->old.removepkg = removepkg;
 			return 0;
 		} else {
 			/*
@@ -726,8 +737,8 @@ collect_binpkg_files(struct xbps_handle *xhp, xbps_dictionary_t pkg_repod,
 out:
 	if (pkg_fd != -1)
 		close(pkg_fd);
-	if (ar)
-		archive_read_finish(ar);
+	if (ar != NULL)
+		archive_read_free(ar);
 	free(bpkg);
 	return rv;
 }
@@ -755,6 +766,26 @@ cleanup(struct xbps_handle *xhp)
 	free(xhp->items);
 }
 
+/*
+ * xbps_transaction_files:
+ *
+ * - read files from each installed package in the transaction
+ * - read files from each binary package in the transaction
+ *
+ * - Find file conflicts between packages before starting the transaction
+ *
+ * - Schedule the removal of files
+ *   - unlink files before extracting the package if the file type changed,
+ *     a symlink becomes a directory or a directory becomes a regular file
+ *     or symlink.
+ *   - directories replaced with other file types are checked to be empty
+ *     to avoid ENOTEMPTY while unpacking packages.
+ *   - the last package removing a file out of a directory
+ *     will try to remove that directory to avoid ENOTEMPTY
+ *   - the removal of obsolete files and directory is sorted by
+ *     path length so that directory content is removed before
+ *     removing the directory.
+ */
 int HIDDEN
 xbps_transaction_files(struct xbps_handle *xhp, xbps_object_iterator_t iter)
 {
@@ -770,11 +801,8 @@ xbps_transaction_files(struct xbps_handle *xhp, xbps_object_iterator_t iter)
 
 	while ((obj = xbps_object_iterator_next(iter)) != NULL) {
 		bool update = false;
-		/*
-		 * `idx` is used as package install index, to chose which
-		 * choose the first package which owns or used to own the
-		 * file deletes it.
-		 */
+
+		/* increment the index of the given package package in the transaction */
 		idx++;
 
 		/* ignore pkgs in hold mode or in unpacked state */

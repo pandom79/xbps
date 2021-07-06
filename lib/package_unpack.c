@@ -73,25 +73,22 @@ unpack_archive(struct xbps_handle *xhp,
 	       const char *fname,
 	       struct archive *ar)
 {
-	xbps_dictionary_t binpkg_propsd, binpkg_filesd, pkg_filesd, obsd;
+	xbps_dictionary_t binpkg_filesd, pkg_filesd, obsd;
 	xbps_array_t array, obsoletes;
-	xbps_data_t data;
 	xbps_trans_type_t ttype;
 	const struct stat *entry_statp;
-	void *instbuf = NULL, *rembuf = NULL;
 	struct stat st;
 	struct xbps_unpack_cb_data xucd;
 	struct archive_entry *entry;
-	size_t  instbufsiz = 0, rembufsiz = 0;
 	ssize_t entry_size;
-	const char *entry_pname, *binpkg_pkgver, *pkgname;
+	const char *entry_pname, *pkgname;
 	char *buf = NULL;
 	int ar_rv, rv, error, entry_type, flags;
 	bool preserve, update, file_exists, keep_conf_file;
 	bool skip_extract, force, xucd_stats;
 	uid_t euid;
 
-	binpkg_propsd = binpkg_filesd = pkg_filesd = NULL;
+	binpkg_filesd = pkg_filesd = NULL;
 	force = preserve = update = file_exists = false;
 	xucd_stats = false;
 	ar_rv = rv = error = entry_type = flags = 0;
@@ -161,45 +158,20 @@ unpack_archive(struct xbps_handle *xhp,
 		entry_pname = archive_entry_pathname(entry);
 		entry_size = archive_entry_size(entry);
 
-		if (strcmp("./INSTALL", entry_pname) == 0) {
-			/*
-			 * Store file in a buffer to execute it later.
-			 */
-			instbufsiz = entry_size;
-			instbuf = malloc(entry_size);
-			assert(instbuf);
-			if (archive_read_data(ar, instbuf, entry_size) != entry_size) {
-				rv = EINVAL;
-				goto out;
-			}
-		} else if (strcmp("./REMOVE", entry_pname) == 0) {
-			/*
-			 * Store file in a buffer to execute it later.
-			 */
-			rembufsiz = entry_size;
-			rembuf = malloc(entry_size);
-			assert(rembuf);
-			if (archive_read_data(ar, rembuf, entry_size) != entry_size) {
-				rv = EINVAL;
-				goto out;
-			}
-		} else if (strcmp("./props.plist", entry_pname) == 0) {
-			binpkg_propsd = xbps_archive_get_dictionary(ar, entry);
-			if (binpkg_propsd == NULL) {
-				rv = EINVAL;
-				goto out;
-			}
+		if (strcmp("./INSTALL", entry_pname) == 0 ||
+		    strcmp("./REMOVE", entry_pname) == 0 ||
+		    strcmp("./props.plist", entry_pname) == 0) {
+			archive_read_data_skip(ar);
 		} else if (strcmp("./files.plist", entry_pname) == 0) {
 			binpkg_filesd = xbps_archive_get_dictionary(ar, entry);
 			if (binpkg_filesd == NULL) {
 				rv = EINVAL;
 				goto out;
 			}
-		} else {
-			archive_read_data_skip(ar);
-		}
-		if (binpkg_filesd)
 			break;
+		} else {
+			break;
+		}
 	}
 	/*
 	 * If there was any error extracting files from archive, error out.
@@ -214,21 +186,10 @@ unpack_archive(struct xbps_handle *xhp,
 	/*
 	 * Bail out if required metadata files are not in archive.
 	 */
-	if (binpkg_propsd == NULL || binpkg_filesd == NULL) {
+	if (binpkg_filesd == NULL) {
 		xbps_set_cb_state(xhp, XBPS_STATE_UNPACK_FAIL, ENODEV, pkgver,
 		    "%s: [unpack] invalid binary package `%s'.", pkgver, fname);
 		rv = ENODEV;
-		goto out;
-	}
-
-	/*
-	 * Check that the pkgver in the binpkg matches the one we're looking for.
-	 */
-	xbps_dictionary_get_cstring_nocopy(binpkg_propsd, "pkgver", &binpkg_pkgver);
-	if (strcmp(pkgver, binpkg_pkgver) != 0) {
-		xbps_set_cb_state(xhp, XBPS_STATE_UNPACK_FAIL, EINVAL, pkgver,
-		    "%s: [unpack] pkgver mismatch repodata: `%s' binpkg: `%s'.", fname, pkgver, binpkg_pkgver);
-		rv = EINVAL;
 		goto out;
 	}
 
@@ -237,31 +198,6 @@ unpack_archive(struct xbps_handle *xhp,
 	 */
 	pkg_filesd = xbps_pkgdb_get_pkg_files(xhp, pkgname);
 
-	/* Add pkg install/remove scripts data objects into our dictionary */
-	if (instbuf != NULL) {
-		data = xbps_data_create_data(instbuf, instbufsiz);
-		assert(data);
-		xbps_dictionary_set(pkg_repod, "install-script", data);
-		xbps_object_release(data);
-	}
-	if (rembuf != NULL) {
-		data = xbps_data_create_data(rembuf, rembufsiz);
-		assert(data);
-		xbps_dictionary_set(pkg_repod, "remove-script", data);
-		xbps_object_release(data);
-	}
-	/*
-	 * Execute INSTALL "pre" ACTION before unpacking files.
-	 */
-	if (instbuf != NULL) {
-		rv = xbps_pkg_exec_buffer(xhp, instbuf, instbufsiz, pkgver, "pre", update);
-		if (rv != 0) {
-			xbps_set_cb_state(xhp, XBPS_STATE_UNPACK_FAIL, rv, pkgver,
-			    "%s: [unpack] INSTALL script failed to execute pre ACTION: %s",
-			    pkgver, strerror(rv));
-			goto out;
-		}
-	}
 	/*
 	 * Unpack all files on archive now.
 	 */
@@ -456,33 +392,6 @@ unpack_archive(struct xbps_handle *xhp,
 			    "mode to %s.\n", pkgver, entry_pname,
 			    archive_entry_strmode(entry));
 		}
-		/*
-		 * Check if current file mtime differs from archive entry
-		 * in binpkg and apply mtime if true.
-		 */
-		if (!force && file_exists && skip_extract &&
-		    (archive_entry_mtime_nsec(entry) != st.st_mtime)) {
-			struct timespec ts[2];
-
-			ts[0].tv_sec = archive_entry_atime(entry);
-			ts[0].tv_nsec = archive_entry_atime_nsec(entry);
-			ts[1].tv_sec = archive_entry_mtime(entry);
-			ts[1].tv_nsec = archive_entry_mtime_nsec(entry);
-
-			if (utimensat(AT_FDCWD, entry_pname, ts,
-				      AT_SYMLINK_NOFOLLOW) == -1) {
-				xbps_dbg_printf(xhp,
-				    "%s: failed "
-				    "to set mtime %lu to %s: %s\n",
-				    pkgver, archive_entry_mtime_nsec(entry),
-				    entry_pname,
-				    strerror(errno));
-				rv = EINVAL;
-				goto out;
-			}
-			xbps_dbg_printf(xhp, "%s: updated file timestamps to %s\n",
-			    pkgver, entry_pname);
-		}
 		if (!force && skip_extract) {
 			archive_read_data_skip(ar);
 			continue;
@@ -550,14 +459,7 @@ out:
 		unlink(buf);
 		free(buf);
 	}
-	if (xbps_object_type(binpkg_propsd) == XBPS_TYPE_DICTIONARY)
-		xbps_object_release(binpkg_propsd);
-	if (xbps_object_type(binpkg_filesd) == XBPS_TYPE_DICTIONARY)
-		xbps_object_release(binpkg_filesd);
-	if (instbuf != NULL)
-		free(instbuf);
-	if (rembuf != NULL)
-		free(rembuf);
+	xbps_object_release(binpkg_filesd);
 
 	return rv;
 }
@@ -670,8 +572,8 @@ xbps_unpack_binary_pkg(struct xbps_handle *xhp, xbps_dictionary_t pkg_repod)
 out:
 	if (pkg_fd != -1)
 		close(pkg_fd);
-	if (ar)
-		archive_read_finish(ar);
+	if (ar != NULL)
+		archive_read_free(ar);
 	if (bpkg)
 		free(bpkg);
 
